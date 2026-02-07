@@ -23,7 +23,7 @@ jobs:
             # Mappa la cartella locale "model_weights" nella cartella interna "deepface_home"
             add_data_cmd: '--add-data "overlay.png;." --add-data "model_weights\weights;deepface_home\weights"'
           
-          - os: macos-13 # Usiamo Ventura (Intel) per max compatibilità
+          - os: macos-latest # Usiamo Ventura (Intel) per max compatibilità
             python_ver: '3.10'
             exe_name: EmotionDemo_Mac_AIO
             # Sintassi Mac/Linux: due punti (:) e slash (/)
