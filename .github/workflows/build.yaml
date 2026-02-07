@@ -3,7 +3,7 @@ name: Build All-In-One Demo Executable
 on:
   push:
     tags:
-      - 'v-aio*' 
+      - 'v*' 
 
 permissions:
   contents: write
