@@ -1,68 +1,79 @@
-name: Build Emotion App
+name: Build All-In-One Demo Executable
 
 on:
   push:
     tags:
-      - 'v*' # Si attiva solo quando crei un tag (es. v1.0)
+      - 'v*'
 
 permissions:
   contents: write
 
 jobs:
   build:
-    name: Build for ${{ matrix.os }}
+    name: Build All-In-One for ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
-            artifact_name: EmotionAI_Windows.exe
-            asset_name: EmotionAI_Windows.exe
-          - os: macos-latest # Nota: Questo userà Mac Intel (compatibile con M1/M2 tramite Rosetta)
-            artifact_name: EmotionAI_Mac
-            asset_name: EmotionAI_Mac.zip
+            python_ver: '3.10'
+            exe_name: EmotionDemo_Win_AIO.exe
+            # Sintassi Windows: punto e virgola (;) e backslash (\)
+            # Mappa la cartella locale "model_weights" nella cartella interna "deepface_home"
+            add_data_cmd: '--add-data "overlay.png;." --add-data "model_weights\weights;deepface_home\weights"'
+          
+          - os: macos-13 # Usiamo Ventura (Intel) per max compatibilità
+            python_ver: '3.10'
+            exe_name: EmotionDemo_Mac_AIO
+            # Sintassi Mac/Linux: due punti (:) e slash (/)
+            add_data_cmd: '--add-data "overlay.png:." --add-data "model_weights/weights:deepface_home/weights"'
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v3
+    - name: Checkout Code (with LFS)
+      uses: actions/checkout@v4
+      with:
+        lfs: true # FONDAMENTALE: Scarica i file pesanti
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.10' # Usiamo 3.10 che è stabilissimo per TensorFlow
+        python-version: ${{ matrix.python_ver }}
+        cache: 'pip'
 
     - name: Install Dependencies
+      # Installiamo le versioni specifiche e TensorFlow CPU per la build machine
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        # Installiamo TensorFlow CPU per la compatibilità universale della build
         pip install tensorflow
 
-    - name: Build with PyInstaller (Windows)
-      if: runner.os == 'Windows'
+    - name: Build All-In-One Executable
+      # Questo comando crea un singolo file gigante (--onefile)
+      # nasconde la console (--noconsole su win, --windowed su mac)
+      # e include i dati pesanti definiti sopra
       run: |
-        pyinstaller demo.py --name EmotionAI --onefile --windowed --clean --add-data "overlay.png;." --hidden-import=deepface --hidden-import=tensorflow --hidden-import=tf_keras --hidden-import=pandas --hidden-import=numpy
+        pyinstaller emotion_demo_aio.py --name ${{ matrix.exe_name }} --onefile --windowed --clean ${{ matrix.add_data_cmd }} --hidden-import=deepface --hidden-import=tensorflow --hidden-import=tf_keras --hidden-import=pandas --hidden-import=numpy --hidden-import=PIL
 
-    - name: Build with PyInstaller (Mac)
+    - name: Package Mac App (Only macOS)
       if: runner.os == 'macOS'
       run: |
-        pyinstaller demo.py --name EmotionAI --onefile --windowed --clean --add-data "overlay.png:." --hidden-import=deepface --hidden-import=tensorflow --hidden-import=tf_keras --hidden-import=pandas --hidden-import=numpy
-        # Zippiamo l'app Mac perché è una cartella .app
+        # Su Mac, --onefile crea un .app bundle. Lo zippiamo per il download.
         cd dist
-        zip -r EmotionAI_Mac.zip EmotionAI.app
+        zip -r ${{ matrix.exe_name }}.zip ${{ matrix.exe_name }}.app
 
-    - name: Upload Release Asset (Windows)
+    - name: Upload Windows Release
       if: runner.os == 'Windows'
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
-        files: dist/EmotionAI.exe
+        files: dist/${{ matrix.exe_name }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Upload Release Asset (Mac)
+    - name: Upload Mac Release
       if: runner.os == 'macOS'
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
-        files: dist/EmotionAI_Mac.zip
+        files: dist/${{ matrix.exe_name }}.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
