@@ -3,37 +3,40 @@ name: Build All-In-One Demo Executable
 on:
   push:
     tags:
-      - 'v*'
+      - 'v-aio*' 
 
 permissions:
   contents: write
 
 jobs:
   build:
-    name: Build All-In-One for ${{ matrix.os }}
+    name: Build for ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          # --- WINDOWS CONFIG ---
           - os: windows-latest
             python_ver: '3.10'
             exe_name: EmotionDemo_Win_AIO.exe
-            # Sintassi Windows: punto e virgola (;) e backslash (\)
-            # Mappa la cartella locale "model_weights" nella cartella interna "deepface_home"
-            add_data_cmd: '--add-data "overlay.png;." --add-data "model_weights\weights;deepface_home\weights"'
-          
-          - os: macos-latest # Usiamo Ventura (Intel) per max compatibilità
+            # Sintassi Windows (;). 
+            # Mappiamo: "Locale" -> "Dentro EXE/.deepface/weights"
+            add_data_cmd: --add-data "overlay.png;." --add-data "model_weights/weights;./.deepface/weights"
+
+          # --- MAC CONFIG ---
+          - os: macos-latest
             python_ver: '3.10'
             exe_name: EmotionDemo_Mac_AIO
-            # Sintassi Mac/Linux: due punti (:) e slash (/)
-            add_data_cmd: '--add-data "overlay.png:." --add-data "model_weights/weights:deepface_home/weights"'
+            # Sintassi Mac (:). 
+            # Mappiamo: "Locale" -> "Dentro EXE/.deepface/weights"
+            add_data_cmd: --add-data "overlay.png:." --add-data "model_weights/weights:./.deepface/weights"
 
     steps:
     - name: Checkout Code (with LFS)
       uses: actions/checkout@v4
       with:
-        lfs: true # FONDAMENTALE: Scarica i file pesanti
+        lfs: true # CRUCIALE: Scarica i file giganti
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -42,27 +45,34 @@ jobs:
         cache: 'pip'
 
     - name: Install Dependencies
-      # Installiamo le versioni specifiche e TensorFlow CPU per la build machine
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install tensorflow
 
     - name: Build All-In-One Executable
-      # Questo comando crea un singolo file gigante (--onefile)
-      # nasconde la console (--noconsole su win, --windowed su mac)
-      # e include i dati pesanti definiti sopra
+      # --onefile: tutto in uno
+      # --windowed: niente terminale
+      # hidden-imports: forziamo l'inclusione di moduli che PyInstaller perde spesso
       run: |
-        pyinstaller emotion_demo_aio.py --name ${{ matrix.exe_name }} --onefile --windowed --clean ${{ matrix.add_data_cmd }} --hidden-import=deepface --hidden-import=tensorflow --hidden-import=tf_keras --hidden-import=pandas --hidden-import=numpy --hidden-import=PIL
+        pyinstaller emotion_demo_aio.py --name ${{ matrix.exe_name }} --onefile --windowed --clean ${{ matrix.add_data_cmd }} --hidden-import=deepface --hidden-import=tensorflow --hidden-import=tf_keras --hidden-import=pandas --hidden-import=numpy --hidden-import=PIL --hidden-import=h5py
 
-    - name: Package Mac App (Only macOS)
+    # --- PACKAGING MAC ---
+    - name: Package Mac App
       if: runner.os == 'macOS'
       run: |
-        # Su Mac, --onefile crea un .app bundle. Lo zippiamo per il download.
         cd dist
-        zip -r ${{ matrix.exe_name }}.zip ${{ matrix.exe_name }}.app
+        # Se è un .app, zippalo
+        if [ -d "${{ matrix.exe_name }}.app" ]; then
+            zip -r ${{ matrix.exe_name }}.zip ${{ matrix.exe_name }}.app
+        else
+            # Se è un binario unix, rinominalo e zippalo
+            mv ${{ matrix.exe_name }} EmotionDemo_Run
+            zip -r ${{ matrix.exe_name }}.zip EmotionDemo_Run
+        fi
 
-    - name: Upload Windows Release
+    # --- UPLOAD ---
+    - name: Upload Windows
       if: runner.os == 'Windows'
       uses: softprops/action-gh-release@v2
       with:
@@ -70,7 +80,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Upload Mac Release
+    - name: Upload Mac
       if: runner.os == 'macOS'
       uses: softprops/action-gh-release@v2
       with:

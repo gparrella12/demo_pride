@@ -5,28 +5,29 @@ import numpy as np
 import threading
 import time
 import platform
+import traceback
+import datetime
 
+# --- CONFIGURAZIONE AMBIENTE OFFLINE ---
 if getattr(sys, 'frozen', False):
-    # Siamo dentro l'eseguibile
-    # Puntiamo alla cartella interna dove abbiamo mappato i pesi (vedi build.yml)
-    os.environ['DEEPFACE_HOME'] = os.path.join(sys._MEIPASS, 'deepface_home')
-    print(f"Running in frozen mode. DeepFace home set to internal: {os.environ['DEEPFACE_HOME']}")
+    # Se siamo in un exe (PyInstaller)
+    # Impostiamo la HOME di DeepFace alla cartella temporanea dell'exe
+    bundle_dir = sys._MEIPASS
+    os.environ['DEEPFACE_HOME'] = bundle_dir
     
-    # Verifica debug (opzionale, per vedere se i file ci sono)
-    weights_path = os.path.join(os.environ['DEEPFACE_HOME'], 'weights')
-    if os.path.exists(weights_path):
-         print(f"Internal weights found: {os.listdir(weights_path)}")
-    else:
-         print("ERROR: Internal weights folder not found!")
+    # Debug (scrive su file se qualcosa non va)
+    print(f"[INFO] Running Frozen. DeepFace Home: {bundle_dir}")
 else:
-    # Siamo in sviluppo locale (file .py standard)
-    print("Running in standard script mode.")
-    # Non serve fare nulla, usa il default ~/.deepface
+    # Se siamo in sviluppo locale
+    print("[INFO] Running Standard Script.")
+    # Usa la default ~/.deepface
 
-
+# --- IMPORT DOPO IL SETUP ---
+# Silenzia TensorFlow
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 from deepface import DeepFace
 
-# --- CONFIGURAZIONE DEMO ---
+# --- CONFIGURAZIONE ---
 BACKEND = 'ssd' 
 
 COLORS = {
@@ -41,11 +42,8 @@ TRADUZIONI = {
 }
 
 def resource_path(relative_path):
-    """ Gestisce i percorsi per file dati (overlay.png) """
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
+    try: base_path = sys._MEIPASS
+    except: base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
 def overlay_transparent(background, overlay):
@@ -64,14 +62,11 @@ def overlay_transparent(background, overlay):
     return background.astype(np.uint8)
 
 def warmup_system():
-    print("  WARMUP IN CORSO (Caricamento pesi dai file interni)...")
-    # Questo passaggio ora caricherà i file direttamente dall'interno dell'exe
+    print("  CARICAMENTO SISTEMA (Attendere, potrebbe richiedere secondi)...")
     dummy = np.zeros((480, 640, 3), dtype=np.uint8)
-    try:
-        DeepFace.analyze(dummy, actions=['emotion', 'age', 'gender'], detector_backend=BACKEND, enforce_detection=False, silent=True)
-        print("✅ WARMUP COMPLETATO.")
-    except Exception as e:
-        print(f"⚠️ Errore Warmup: {e}")
+    # Primo test a vuoto: se i file ci sono, li carica istantaneamente
+    DeepFace.analyze(dummy, actions=['emotion', 'age', 'gender'], detector_backend=BACKEND, enforce_detection=False, silent=True)
+    print("✅ SISTEMA PRONTO.")
 
 class EmotionAnalyzer:
     def __init__(self):
@@ -129,16 +124,24 @@ def draw_hud(img, data):
     x, y, w, h = data['box']
     color = data['col']
     tcol = data['tcol']
-    # (Codice disegno semplificato per brevità, usa quello tuo completo se preferisci)
-    cv2.rectangle(img, (x, y), (x+w, y+h), color, 2)
+    # Mirino semplificato
+    l = int(w * 0.2)
+    cv2.line(img, (x, y), (x + l, y), color, 4)
+    cv2.line(img, (x, y), (x, y + l), color, 4)
+    cv2.line(img, (x+w, y), (x+w-l, y), color, 4)
+    cv2.line(img, (x+w, y), (x+w, y+l), color, 4)
+    cv2.line(img, (x, y+h), (x+l, y+h), color, 4)
+    cv2.line(img, (x, y+h), (x, y+h-l), color, 4)
+    cv2.line(img, (x+w, y+h), (x+w-l, y+h), color, 4)
+    cv2.line(img, (x+w, y+h), (x+w, y+h-l), color, 4)
+    
+    # Testo
     cv2.putText(img, data['label'], (x, y-25), cv2.FONT_HERSHEY_TRIPLEX, 1.2, tcol, 2)
     cv2.putText(img, data['sub'], (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.7, tcol, 1)
 
 def main():
-    # Su Windows, serve per evitare che il multiprocessing (usato da alcune librerie)
-    # crei loop infiniti quando l'app è congelata.
     import multiprocessing
-    multiprocessing.freeze_support()
+    multiprocessing.freeze_support() # Fix per Windows frozen
 
     warmup_system()
     cap = cv2.VideoCapture(0)
@@ -151,7 +154,7 @@ def main():
     analyzer = EmotionAnalyzer()
     analyzer.start()
 
-    win_name = 'Emotion AI Demo All-In-One'
+    win_name = 'Emotion AI Demo'
     cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
     
     print("Premi 'q' per uscire.")
@@ -172,4 +175,13 @@ def main():
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    main()
+    # BLOCCO ANTI-CRASH PER MAC
+    # Se l'app crasha, scrive il motivo sul Desktop
+    try:
+        main()
+    except Exception as e:
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        err_file = os.path.join(desktop, "CRASH_LOG_EMOTION.txt")
+        with open(err_file, "w") as f:
+            f.write(f"Crash Time: {datetime.datetime.now()}\n")
+            f.write(traceback.format_exc())
