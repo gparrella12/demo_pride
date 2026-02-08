@@ -6,3 +6,4 @@ torchaudio
 facenet-pytorch
 hsemotion
 timm==0.9.16
+pyinstaller

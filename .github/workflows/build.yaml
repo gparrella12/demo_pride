@@ -20,15 +20,14 @@ jobs:
           - os: windows-latest
             python_ver: '3.10'
             exe_name: EmotionDemo_Win.exe
-            # Windows Separator is ;
-            # We only bundle the overlay. Models are downloaded by the app on first run.
+            # Windows usa ; come separatore
             add_data_cmd: --add-data "overlay.png;." 
 
           # --- MAC CONFIG ---
           - os: macos-latest
             python_ver: '3.10'
             exe_name: EmotionDemo_Mac
-            # Mac Separator is :
+            # Mac usa : come separatore
             add_data_cmd: --add-data "overlay.png:."
 
     steps:
@@ -45,12 +44,13 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        # No extra tensorflow needed for PyTorch version
+        # Installiamo esplicitamente PyInstaller per essere sicuri
+        pip install pyinstaller
 
     - name: Build All-In-One Executable
-      # --onefile: Create a single executable
-      # --windowed: Hides the console (necessary for GUI apps)
-      # We include hidden imports for PyTorch/HSEmotion to ensure PyInstaller finds them
+      # --onefile: Unico file
+      # --windowed: Niente console nera
+      # --collect-all timm: Cruciale per il fix di compatibilità
       run: |
         pyinstaller demo.py --name ${{ matrix.exe_name }} --onefile --windowed --clean ${{ matrix.add_data_cmd }} --hidden-import=torch --hidden-import=torchvision --hidden-import=facenet_pytorch --hidden-import=hsemotion --hidden-import=timm --hidden-import=numpy --hidden-import=PIL --collect-all=timm
 
@@ -59,11 +59,11 @@ jobs:
       if: runner.os == 'macOS'
       run: |
         cd dist
-        # PyInstaller on Mac creates an .app bundle with --onefile + --windowed
+        # PyInstaller su Mac crea un pacchetto .app
         if [ -d "${{ matrix.exe_name }}.app" ]; then
             zip -r ${{ matrix.exe_name }}.zip ${{ matrix.exe_name }}.app
         else
-            # Fallback if it created a unix executable
+            # Fallback se crea un unix executable
             mv ${{ matrix.exe_name }} EmotionDemo_Run
             zip -r ${{ matrix.exe_name }}.zip EmotionDemo_Run
         fi
