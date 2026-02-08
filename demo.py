@@ -110,7 +110,7 @@ class LoadingScreen:
         self.root.overrideredirect(True) # Remove title bar for splash effect
 
         # Label
-        self.lbl = tk.Label(self.root, text="Initializing AI Models...", fg='white', bg='#2c3e50', font=("Helvetica", 12))
+        self.lbl = tk.Label(self.root, text="Initializing AI Models...", fg='white', bg='#2c3e50', font=("Helvetica", 14))
         self.lbl.pack(pady=20)
 
         # Progress Bar
@@ -140,8 +140,7 @@ class LoadingScreen:
             self.update_status(f"Loading MTCNN (Face Detection) on {device}...", 30)
             
             # Initialize Analyzer (MTCNN loads here)
-            # We enforce CPU for MTCNN on Mac to avoid empty detection issues
-            mtcnn_device = torch.device('cpu') 
+            mtcnn_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             
             mtcnn = MTCNN(
                 keep_all=True, 
@@ -296,8 +295,8 @@ def draw_hud(img, data):
 
     # Label styling
     font = cv2.FONT_HERSHEY_TRIPLEX
-    scale = 1.0
-    thickness = 2
+    scale = 2.0
+    thickness = 1
     (tw, th), _ = cv2.getTextSize(label_text, font, scale, thickness)
     
     # Position logic
@@ -363,6 +362,10 @@ def main():
         frame = overlay_transparent(frame, overlay)
 
         cv2.imshow(win_name, frame)
+        
+        if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
+            break
+            
         if cv2.waitKey(1) & 0xFF == ord('q'): break
 
     analyzer.running = False
