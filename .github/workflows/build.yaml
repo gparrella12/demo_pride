@@ -44,15 +44,13 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        # Installiamo esplicitamente PyInstaller per essere sicuri
+        # Installiamo esplicitamente PyInstaller per sicurezza
         pip install pyinstaller
 
     - name: Build All-In-One Executable
-      # --onefile: Unico file
-      # --windowed: Niente console nera
-      # --collect-all timm: Cruciale per il fix di compatibilità
+      # AGGIUNTO --collect-all=facenet_pytorch per includere i file .pt mancanti
       run: |
-        pyinstaller demo.py --name ${{ matrix.exe_name }} --onefile --windowed --clean ${{ matrix.add_data_cmd }} --hidden-import=torch --hidden-import=torchvision --hidden-import=facenet_pytorch --hidden-import=hsemotion --hidden-import=timm --hidden-import=numpy --hidden-import=PIL --collect-all=timm
+        pyinstaller demo.py --name ${{ matrix.exe_name }} --onefile --windowed --clean ${{ matrix.add_data_cmd }} --hidden-import=torch --hidden-import=torchvision --hidden-import=facenet_pytorch --hidden-import=hsemotion --hidden-import=timm --hidden-import=numpy --hidden-import=PIL --collect-all=timm --collect-all=facenet_pytorch
 
     # --- PACKAGING MAC ---
     - name: Package Mac App
