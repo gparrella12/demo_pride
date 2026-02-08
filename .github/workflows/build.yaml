@@ -19,25 +19,22 @@ jobs:
           # --- WINDOWS CONFIG ---
           - os: windows-latest
             python_ver: '3.10'
-            exe_name: EmotionDemo_Win_AIO.exe
-            # Sintassi Windows (;). 
-            # Mappiamo: "Locale" -> "Dentro EXE/.deepface/weights"
-            add_data_cmd: --add-data "overlay.png;." --add-data "model_weights/weights;./.deepface/weights"
+            exe_name: EmotionDemo_Win.exe
+            # Windows Separator is ;
+            # We only bundle the overlay. Models are downloaded by the app on first run.
+            add_data_cmd: --add-data "overlay.png;." 
 
           # --- MAC CONFIG ---
           - os: macos-latest
             python_ver: '3.10'
-            exe_name: EmotionDemo_Mac_AIO
-            # Sintassi Mac (:). 
-            # Mappiamo: "Locale" -> "Dentro EXE/.deepface/weights"
-            add_data_cmd: --add-data "overlay.png:." --add-data "model_weights/weights:./.deepface/weights"
+            exe_name: EmotionDemo_Mac
+            # Mac Separator is :
+            add_data_cmd: --add-data "overlay.png:."
 
     steps:
-    - name: Checkout Code (with LFS)
+    - name: Checkout Code
       uses: actions/checkout@v4
-      with:
-        lfs: true # CRUCIALE: Scarica i file giganti
-
+      
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
@@ -48,30 +45,30 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install tensorflow
+        # No extra tensorflow needed for PyTorch version
 
     - name: Build All-In-One Executable
-      # --onefile: tutto in uno
-      # --windowed: niente terminale
-      # hidden-imports: forziamo l'inclusione di moduli che PyInstaller perde spesso
+      # --onefile: Create a single executable
+      # --windowed: Hides the console (necessary for GUI apps)
+      # We include hidden imports for PyTorch/HSEmotion to ensure PyInstaller finds them
       run: |
-        pyinstaller emotion_demo_aio.py --name ${{ matrix.exe_name }} --onefile --windowed --clean ${{ matrix.add_data_cmd }} --hidden-import=deepface --hidden-import=tensorflow --hidden-import=tf_keras --hidden-import=pandas --hidden-import=numpy --hidden-import=PIL --hidden-import=h5py
+        pyinstaller demo.py --name ${{ matrix.exe_name }} --onefile --windowed --clean ${{ matrix.add_data_cmd }} --hidden-import=torch --hidden-import=torchvision --hidden-import=facenet_pytorch --hidden-import=hsemotion --hidden-import=timm --hidden-import=numpy --hidden-import=PIL --collect-all=timm
 
     # --- PACKAGING MAC ---
     - name: Package Mac App
       if: runner.os == 'macOS'
       run: |
         cd dist
-        # Se è un .app, zippalo
+        # PyInstaller on Mac creates an .app bundle with --onefile + --windowed
         if [ -d "${{ matrix.exe_name }}.app" ]; then
             zip -r ${{ matrix.exe_name }}.zip ${{ matrix.exe_name }}.app
         else
-            # Se è un binario unix, rinominalo e zippalo
+            # Fallback if it created a unix executable
             mv ${{ matrix.exe_name }} EmotionDemo_Run
             zip -r ${{ matrix.exe_name }}.zip EmotionDemo_Run
         fi
 
-    # --- UPLOAD ---
+    # --- UPLOAD WINDOWS ---
     - name: Upload Windows
       if: runner.os == 'Windows'
       uses: softprops/action-gh-release@v2
@@ -80,6 +77,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+    # --- UPLOAD MAC ---
     - name: Upload Mac
       if: runner.os == 'macOS'
       uses: softprops/action-gh-release@v2
