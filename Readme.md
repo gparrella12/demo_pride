@@ -1,4 +1,4 @@
-# Emotion Recognition System (PyTorch Edition)
+# Emotion Recognition System
 
 A high-performance, real-time facial emotion recognition system built with PyTorch.
 
