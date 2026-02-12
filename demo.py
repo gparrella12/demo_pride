@@ -8,19 +8,31 @@ import os
 import traceback
 import tkinter as tk
 from tkinter import ttk
+from tkinter import messagebox
+from datetime import datetime
 
 # --- CONFIGURATION ---
 DEBUG_MODE = False
-PROCESS_WIDTH = 640  # Resolution for AI processing (lower = faster)
+PROCESS_WIDTH = 640  # Risoluzione interna AI (più bassa = più veloce)
+EXPIRATION_DATE = datetime(2026, 12, 31) # Data di scadenza software
 
-# --- VISUAL SETTINGS ---
-COLORS = {
-    'positive': (0, 255, 255),   # Yellow
-    'negative': (0, 0, 255),     # Red
-    'neutral':  (255, 255, 255), # White
+# --- VISUAL SETTINGS (COLORI ESPANSI) ---
+# Formato BGR (Blue, Green, Red) - OpenCV usa questo formato
+EMOTION_COLORS = {
+    'Anger':     (0, 0, 255),       # Rosso Puro
+    'Disgust':   (0, 100, 0),       # Verde Scuro
+    'Fear':      (128, 0, 128),     # Viola
+    'Happiness': (0, 215, 255),     # Oro/Giallo
+    'Sadness':   (255, 0, 0),       # Blu
+    'Surprise':  (255, 255, 0),     # Ciano
+    'Neutral':   (220, 220, 220),   # Grigio Chiaro
+    'Contempt':  (0, 140, 255)      # Arancione
 }
 
-# Translations (English Key -> Italian Display)
+# Colore di default se l'emozione non è in lista
+DEFAULT_COLOR = (255, 255, 255)
+
+# Traduzioni (Chiave Inglese -> Display Italiano)
 TRANSLATIONS = {
     'Anger': 'ARRABBIATO', 
     'Disgust': 'DISGUSTATO', 
@@ -32,9 +44,9 @@ TRANSLATIONS = {
     'Contempt': 'DISPREZZO' 
 }
 
-# --- CRITICAL FIX FOR PYTORCH 2.6+ ---
-# hsemotion is not yet updated for 'weights_only=True'.
-# This monkey-patch allows loading older weights safely.
+# --- FIX CRITICO PER PYTORCH 2.6+ ---
+# hsemotion non è ancora aggiornata per 'weights_only=True'.
+# Questa patch intercetta il caricamento per evitare crash.
 try:
     _original_load = torch.load
     def safe_load_wrapper(*args, **kwargs):
@@ -50,12 +62,16 @@ from hsemotion.facial_emotions import HSEmotionRecognizer
 
 # --- UTILITIES ---
 def log(message):
-    """Prints debug messages to console if enabled."""
+    """Stampa messaggi di debug solo se abilitato."""
     if DEBUG_MODE:
         print(f"[DEBUG] {message}")
 
+def get_color_for_emotion(emotion_key):
+    """Ritorna il colore BGR specifico per l'emozione."""
+    return EMOTION_COLORS.get(emotion_key, DEFAULT_COLOR)
+
 def resource_path(relative_path):
-    """Get absolute path to resource, works for dev and for PyInstaller."""
+    """Gestisce i percorsi sia per dev che per PyInstaller."""
     try:
         base_path = sys._MEIPASS
     except Exception:
@@ -63,7 +79,7 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 def overlay_transparent(background, overlay):
-    """Overlays a PNG with transparency on top of the background."""
+    """Sovrappone un PNG con trasparenza sopra il frame video."""
     if overlay is None: return background
     bg_h, bg_w = background.shape[:2]
     ov_h, ov_w = overlay.shape[:2]
@@ -84,22 +100,22 @@ def overlay_transparent(background, overlay):
     return background.astype(np.uint8)
 
 def get_device():
-    """Detects best available hardware acceleration."""
+    """Rileva la migliore accelerazione hardware disponibile."""
     if torch.backends.mps.is_available():
-        return torch.device('mps')  # Apple Silicon
+        return torch.device('mps')  # Apple Silicon (Mac)
     elif torch.cuda.is_available():
-        return torch.device('cuda') # NVIDIA
+        return torch.device('cuda') # NVIDIA (Windows/Linux)
     else:
-        return torch.device('cpu')
+        return torch.device('cpu')  # CPU Standard
 
-# --- LOADING SCREEN GUI ---
+# --- SCHERMATA DI CARICAMENTO (GUI) ---
 class LoadingScreen:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Emotion AI - Starting")
         
-        # Center the window
-        w, h = 400, 150
+        # Centra la finestra
+        w, h = 450, 160
         ws = self.root.winfo_screenwidth()
         hs = self.root.winfo_screenheight()
         x = (ws/2) - (w/2)
@@ -107,40 +123,38 @@ class LoadingScreen:
         self.root.geometry('%dx%d+%d+%d' % (w, h, x, y))
         
         self.root.configure(bg='#2c3e50')
-        self.root.overrideredirect(True) # Remove title bar for splash effect
+        self.root.overrideredirect(True) # Rimuove la barra del titolo
 
-        # Label
-        self.lbl = tk.Label(self.root, text="Initializing AI Models...", fg='white', bg='#2c3e50', font=("Helvetica", 14))
-        self.lbl.pack(pady=20)
+        # Etichetta
+        self.lbl = tk.Label(self.root, text="Inizializzazione Modelli AI...", fg='white', bg='#2c3e50', font=("Helvetica", 18))
+        self.lbl.pack(pady=25)
 
-        # Progress Bar
-        self.progress = ttk.Progressbar(self.root, orient=tk.HORIZONTAL, length=300, mode='determinate')
+        # Barra di progresso
+        self.progress = ttk.Progressbar(self.root, orient=tk.HORIZONTAL, length=350, mode='determinate')
         self.progress.pack(pady=10)
 
         self.analyzer = None
 
     def update_status(self, text, value):
-        """Updates text and progress bar."""
         self.lbl.config(text=text)
         self.progress['value'] = value
         self.root.update_idletasks()
 
     def start_loading(self):
-        """Runs the loading process in a separate thread."""
-        t = threading.Thread(target=self._load_models)
+        t = threading.Thread(target=self._load_models, daemon=True)
         t.start()
         self.root.mainloop()
 
     def _load_models(self):
         try:
-            self.update_status("Detecting Hardware...", 10)
+            self.update_status("Controllo Hardware...", 10)
             device = get_device()
-            time.sleep(0.5) # Slight pause for UX
+            time.sleep(0.5)
 
-            self.update_status(f"Loading MTCNN (Face Detection) on {device}...", 30)
+            self.update_status(f"Caricamento MTCNN (Face Detect) su {device}...", 30)
             
-            # Initialize Analyzer (MTCNN loads here)
-            mtcnn_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            # Forziamo CPU per MTCNN su Mac per stabilità, GPU se disponibile altrove
+            mtcnn_device = torch.device('cpu') 
             
             mtcnn = MTCNN(
                 keep_all=True, 
@@ -150,32 +164,31 @@ class LoadingScreen:
                 thresholds=[0.6, 0.7, 0.7]
             )
             
-            self.update_status("Downloading/Loading HSEmotion Weights...", 60)
-            # HSEmotion loads here
+            self.update_status("Scaricamento/Caricamento Pesi HSEmotion...", 60)
+            # HSEmotion usa il device principale (GPU/MPS se possibile)
             emo_model = HSEmotionRecognizer(device=device)
             
-            self.update_status("Warming up inference engine...", 90)
-            # Dummy inference to compile graphs
+            self.update_status("Warmup Motore Neurale...", 90)
+            # Inferenza a vuoto per compilare i grafici
             dummy = np.zeros((100, 100, 3), dtype=np.uint8)
             mtcnn.detect(dummy)
 
-            self.update_status("Ready!", 100)
+            self.update_status("Pronto!", 100)
             time.sleep(0.5)
             
-            # Pass loaded models to the Analyzer class
             self.analyzer = PyTorchAnalyzer(device, mtcnn, emo_model)
             
-            # Close GUI and start main app
+            # Chiude la GUI
             self.root.destroy()
             
         except Exception as e:
-            self.update_status(f"Error: {str(e)}", 0)
+            self.update_status(f"Errore: {str(e)}", 0)
             print(traceback.format_exc())
             time.sleep(5)
             self.root.destroy()
             sys.exit(1)
 
-# --- AI ANALYZER ---
+# --- MOTORE AI ---
 class PyTorchAnalyzer:
     def __init__(self, device, mtcnn, emo_model):
         self.device = device
@@ -187,23 +200,24 @@ class PyTorchAnalyzer:
         self.running = True
         self.lock = threading.Lock()
         self.new_data_available = False
+        self.thread = None 
 
     def start(self):
-        """Starts the background analysis loop."""
-        threading.Thread(target=self._analyze_loop, daemon=True).start()
+        """Avvia il thread di analisi come Demone (si chiude se il main muore)."""
+        self.thread = threading.Thread(target=self._analyze_loop, daemon=True)
+        self.thread.start()
 
     def update_frame(self, frame):
-        """Push a new frame for analysis."""
+        """Passa un nuovo frame da analizzare."""
         with self.lock:
             self.frame_to_process = frame.copy()
             self.new_data_available = True
 
     def get_results(self):
-        """Get latest results."""
         return self.results
 
     def _analyze_loop(self):
-        log("Analysis loop started.")
+        log("Thread Analisi Avviato.")
         while self.running:
             process_now = False
             frame = None
@@ -215,16 +229,16 @@ class PyTorchAnalyzer:
             
             if process_now and frame is not None:
                 try:
-                    # 1. Resize (Optimization)
+                    # 1. Ridimensiona (Ottimizzazione velocità)
                     h_orig, w_orig = frame.shape[:2]
                     scale = PROCESS_WIDTH / float(w_orig)
                     new_h = int(h_orig * scale)
                     small_frame = cv2.resize(frame, (PROCESS_WIDTH, new_h))
                     
-                    # MTCNN needs RGB
+                    # MTCNN vuole RGB
                     rgb_small = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
                     
-                    # 2. Face Detection
+                    # 2. Rilevamento Volti
                     boxes, probs = self.mtcnn.detect(rgb_small)
                     
                     if boxes is None:
@@ -235,33 +249,28 @@ class PyTorchAnalyzer:
                     for box in boxes:
                         x1, y1, x2, y2 = [int(b) for b in box]
                         
-                        # Boundary checks
+                        # Controlli bordi
                         x1 = max(0, x1); y1 = max(0, y1)
                         x2 = min(PROCESS_WIDTH, x2); y2 = min(new_h, y2)
                         
-                        # Size filter
+                        # Filtro dimensione minima
                         if (x2 - x1) < 20 or (y2 - y1) < 20: continue
                         
-                        # 3. Face Extraction
+                        # 3. Estrazione Volto
                         face_img = rgb_small[y1:y2, x1:x2]
                         if face_img.size == 0: continue
 
-                        # 4. Emotion Recognition
+                        # 4. Analisi Emozione
                         emotion, scores = self.emo_model.predict_emotions(face_img, logits=False)
-                        log(f"Detected: {emotion}")
                         
-                        # 5. Upscale Coordinates
+                        # 5. Upscale Coordinate
                         real_x1 = int(x1 / scale)
                         real_y1 = int(y1 / scale)
                         real_w = int((x2 - x1) / scale)
                         real_h = int((y2 - y1) / scale)
                         
-                        # Color Logic
-                        color = COLORS['neutral']
-                        if emotion in ['Happiness', 'Surprise']: 
-                            color = COLORS['positive']
-                        elif emotion in ['Anger', 'Sadness', 'Fear', 'Disgust', 'Contempt']: 
-                            color = COLORS['negative']
+                        # Colore specifico
+                        color = get_color_for_emotion(emotion)
 
                         processed.append({
                             'box': (real_x1, real_y1, real_w, real_h),
@@ -274,9 +283,10 @@ class PyTorchAnalyzer:
                 except Exception as e:
                     print(f"[THREAD ERROR]: {e}")
             else:
+                # Piccola pausa per non fondere la CPU se non ci sono frame
                 time.sleep(0.01)
 
-# --- HUD DRAWING ---
+# --- DISEGNO HUD ---
 def draw_hud(img, data):
     x, y, w, h = data['box']
     color = data['col']
@@ -286,54 +296,75 @@ def draw_hud(img, data):
     corner_len = int(w * 0.25)
     thick = 3
     
-    # Draw corners
+    # Disegna angoli
     for fx, fy in [(x, y), (x+w, y), (x, y+h), (x+w, y+h)]:
         dx = corner_len if fx == x else -corner_len
         dy = corner_len if fy == y else -corner_len
         cv2.line(img, (fx, fy), (fx + dx, fy), color, thick)
         cv2.line(img, (fx, fy), (fx, fy + dy), color, thick)
 
-    # Label styling
+    # Stile Testo
     font = cv2.FONT_HERSHEY_TRIPLEX
-    scale = 2.0
-    thickness = 1
+    scale = 1.5 
+    thickness = 2
     (tw, th), _ = cv2.getTextSize(label_text, font, scale, thickness)
     
-    # Position logic
+    # Logica Posizione (Sopra o Sotto)
     bg_x = x + (w - tw) // 2
     bg_y = y - 20 if y > 100 else y + h + 20 + th
         
     bg_x = max(10, min(bg_x, img.shape[1] - tw - 10))
     bg_y = max(th + 10, min(bg_y, img.shape[0] - 10))
     
-    # Background Box
+    # Sfondo Testo (Semitrasparente)
     pad = 10
     overlay = img.copy()
     cv2.rectangle(overlay, (bg_x - pad, bg_y - th - pad), (bg_x + tw + pad, bg_y + pad), color, -1)
     img[:] = cv2.addWeighted(overlay, 0.85, img, 0.15, 0)
     
-    # Text
+    # Bordo Sfondo
     cv2.rectangle(img, (bg_x - pad, bg_y - th - pad), (bg_x + tw + pad, bg_y + pad), (50, 50, 50), 2)
-    # Drop Shadow
+    
+    # Ombra Testo (Nera)
     cv2.putText(img, label_text, (bg_x + 2, bg_y + 2), font, scale, (0,0,0), thickness + 2, cv2.LINE_AA)
-    # Main Text
-    text_col = (0,0,0) if color != COLORS['negative'] else (255,255,255)
+    
+    # Testo Principale
+    # Se il colore di sfondo è scuro, testo bianco, altrimenti nero
+    is_dark = (color[0] + color[1] + color[2]) / 3 < 100
+    text_col = (255,255,255) if is_dark else (0,0,0)
+    
     cv2.putText(img, label_text, (bg_x, bg_y), font, scale, text_col, thickness, cv2.LINE_AA)
 
-# --- MAIN ENTRY POINT ---
+# --- CONTROLLO LICENZA (TIME BOMB) ---
+def check_validity():
+    """Controlla se la data attuale supera la scadenza."""
+    if datetime.now() > EXPIRATION_DATE:
+        root = tk.Tk()
+        root.withdraw() # Nasconde la finestra principale vuota
+        messagebox.showerror(
+            "Errore Critico", 
+            "Si è verificato un problema tecnico con la licenza del software.\n\n"
+            "Periodo di validità scaduto. Contattare l'assistenza tecnica."
+        )
+        sys.exit(1)
+
+# --- MAIN ---
 def main():
-    # 1. Show Loading Screen (Blocking until ready)
+    # 1. Controllo Data (Bloccante)
+    check_validity()
+
+    # 2. Schermata Caricamento (Bloccante fino a pronto)
     loader = LoadingScreen()
     loader.start_loading()
     
-    # 2. Retrieve Initialized Analyzer
+    # 3. Recupero Analizzatore Inizializzato
     analyzer = loader.analyzer
     if analyzer is None:
-        print("Initialization failed. Exiting.")
+        print("Inizializzazione fallita.")
         return
 
-    # 3. Start Application
-    print("--- EMOTION RECOGNITION SYSTEM STARTED ---")
+    # 4. Avvio Applicazione
+    print("--- SISTEMA RICONOSCIMENTO EMOZIONI AVVIATO ---")
     
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
@@ -343,12 +374,14 @@ def main():
     try: overlay = cv2.imread(resource_path('overlay.png'), -1)
     except: pass
 
+    # Avvio thread AI
     analyzer.start()
 
     win_name = 'Emotion Recognition System'
     cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
 
-    while True:
+    running = True
+    while running:
         ret, frame = cap.read()
         if not ret: break
         
@@ -363,14 +396,20 @@ def main():
 
         cv2.imshow(win_name, frame)
         
-        if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
-            break
+        # Gestione chiusura: 'q' oppure click sulla X della finestra
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            running = False
             
-        if cv2.waitKey(1) & 0xFF == ord('q'): break
+        if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:
+            running = False
 
-    analyzer.running = False
+    # Chiusura Pulita e Veloce
+    print("Chiusura in corso...")
+    analyzer.running = False # Ferma il loop logico del thread
     cap.release()
     cv2.destroyAllWindows()
+    sys.exit(0) # Forza la chiusura dei thread Daemon
 
 if __name__ == "__main__":
     main()
